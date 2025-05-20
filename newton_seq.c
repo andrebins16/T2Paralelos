@@ -112,7 +112,11 @@ int main(int argc, char *argv[]) {
 
     int largura = LARGURA_BASE * nucleos;
 
-    printf("Execução sequencial com multiplicador de cores = %d \n",nucleos);
-    gerar_fractal_newton(largura, ALTURA_BASE, "newton_output.dat");
+    char nome_arquivo[100];
+    snprintf(nome_arquivo, sizeof(nome_arquivo), "newton_seq_%d_output.dat", nucleos);
+
+    printf("Execução sequencial com multiplicador de cores = %d\n", nucleos);
+    gerar_fractal_newton(largura, ALTURA_BASE, nome_arquivo);
+
     return 0;
 }
