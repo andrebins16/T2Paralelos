@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     if (rank == 0) {
-        // MESTRE
+        // Mestre
         int **matriz = malloc(ALTURA * sizeof(int *));
         for (int i = 0; i < ALTURA; i++)
             matriz[i] = malloc(LARGURA * sizeof(int));
@@ -63,7 +63,6 @@ int main(int argc, char *argv[]) {
         int linha_atual = 0, ativos = 0;
         double inicio = MPI_Wtime();
 
-        // Distribui as primeiras tarefas
         for (int i = 1; i < size && linha_atual < ALTURA; i++) {
             MPI_Send(&linha_atual, 1, MPI_INT, i, TAG_TRABALHO, MPI_COMM_WORLD);
             linha_atual++;
@@ -71,28 +70,22 @@ int main(int argc, char *argv[]) {
         }
 
         while (ativos > 0) {
-            int linha_recebida;
-            int origem;
+            int *linha_dados = malloc((LARGURA + 1) * sizeof(int)); // +1 para índice
             MPI_Status status;
+            MPI_Recv(linha_dados, LARGURA + 1, MPI_INT, MPI_ANY_SOURCE, TAG_RESULTADO, MPI_COMM_WORLD, &status);
 
-            // Recebe linha processada
-            int *linha_dados = malloc(LARGURA * sizeof(int));
-            MPI_Recv(linha_dados, LARGURA, MPI_INT, MPI_ANY_SOURCE, TAG_RESULTADO, MPI_COMM_WORLD, &status);
-            origem = status.MPI_SOURCE;
-            MPI_Recv(&linha_recebida, 1, MPI_INT, origem, TAG_RESULTADO, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            // Armazena na matriz
+            int linha_recebida = linha_dados[0];
             for (int j = 0; j < LARGURA; j++)
-                matriz[linha_recebida][j] = linha_dados[j];
+                matriz[linha_recebida][j] = linha_dados[j + 1];
+
             free(linha_dados);
 
-            // Envia nova linha ou termina
             if (linha_atual < ALTURA) {
-                MPI_Send(&linha_atual, 1, MPI_INT, origem, TAG_TRABALHO, MPI_COMM_WORLD);
+                MPI_Send(&linha_atual, 1, MPI_INT, status.MPI_SOURCE, TAG_TRABALHO, MPI_COMM_WORLD);
                 linha_atual++;
             } else {
                 int fim = -1;
-                MPI_Send(&fim, 1, MPI_INT, origem, TAG_TERMINO, MPI_COMM_WORLD);
+                MPI_Send(&fim, 1, MPI_INT, status.MPI_SOURCE, TAG_TERMINO, MPI_COMM_WORLD);
                 ativos--;
             }
         }
@@ -105,7 +98,7 @@ int main(int argc, char *argv[]) {
 
         printf("Fractal gerado com MPI em %.4f segundos\n", fim - inicio);
     } else {
-        // ESCRAVO
+        // Escravo
         while (1) {
             int linha;
             MPI_Status status;
@@ -113,19 +106,18 @@ int main(int argc, char *argv[]) {
 
             if (status.MPI_TAG == TAG_TERMINO) break;
 
-            double y = Y_MIN + (Y_MAX - Y_MIN) * linha / (ALTURA - 1);
-            int *linha_resultado = malloc(LARGURA * sizeof(int));
+            int *linha_dados = malloc((LARGURA + 1) * sizeof(int));
+            linha_dados[0] = linha;
 
+            double y = Y_MIN + (Y_MAX - Y_MIN) * linha / (ALTURA - 1);
             for (int x = 0; x < LARGURA; x++) {
                 double real = X_MIN + (X_MAX - X_MIN) * x / (LARGURA - 1);
                 complex double z = real + y * I;
-                linha_resultado[x] = calcula_convergencia(z);
+                linha_dados[x + 1] = calcula_convergencia(z);
             }
 
-            MPI_Send(linha_resultado, LARGURA, MPI_INT, 0, TAG_RESULTADO, MPI_COMM_WORLD);
-            MPI_Send(&linha, 1, MPI_INT, 0, TAG_RESULTADO, MPI_COMM_WORLD);
-
-            free(linha_resultado);
+            MPI_Send(linha_dados, LARGURA + 1, MPI_INT, 0, TAG_RESULTADO, MPI_COMM_WORLD);
+            free(linha_dados);
         }
     }
 
