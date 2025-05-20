@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-with open("newton_output.dat", "r") as f:
+with open("newton_mpi_output.dat", "r") as f:
     header = f.readline().strip().split()
     WIDTH = int(header[0])
     HEIGHT = int(header[1])
@@ -20,5 +20,5 @@ plt.imshow(data, cmap="twilight_shifted", extent=[X_MIN, X_MAX, Y_MIN, Y_MAX])
 plt.title(f"Fractal de Newton - {WIDTH}x{HEIGHT} - Tempo: {TEMPO:.2f}s")
 plt.axis("off")
 plt.tight_layout()
-plt.savefig("newton_fractal.png", dpi=150)
+plt.savefig("newton_fractal_mpi.png", dpi=150)
 plt.show()
