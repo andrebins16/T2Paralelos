@@ -27,11 +27,7 @@ int calcula_convergencia(complex double z) {
     return MAX_ITERACOES; // não convergiu
 }
 
-void salvar_matriz_em_arquivo(
-    int **matriz, int largura, int altura, double tempo_execucao,
-    double x_min, double x_max, double y_min, double y_max,
-    const char *arquivo_saida
-) {
+void salvar_matriz_em_arquivo(int **matriz, int largura, int altura, double tempo_execucao,const char *arquivo_saida) {
     FILE *fp = fopen(arquivo_saida, "w");
     if (!fp) {
         perror("Erro ao abrir arquivo de saída");
@@ -40,7 +36,7 @@ void salvar_matriz_em_arquivo(
 
     // Cabeçalho
     fprintf(fp, "%d %d %.4f %.17f %.17f %.17f %.17f\n",
-            largura, altura, tempo_execucao, x_min, x_max, y_min, y_max);
+            largura, altura, tempo_execucao, X_MIN, X_MAX, Y_MIN, Y_MAX);
 
     // Matriz
     for (int y = 0; y < altura; y++) {
@@ -76,9 +72,9 @@ void gerar_fractal_newton(int largura, int altura, const char *arquivo_saida) {
 
     for (int y = 0; y < altura; y++) {
         for (int x = 0; x < largura; x++) { //para cada ponto 
-            double real = X_MIN + (X_MAX - X_MIN) * x / (largura - 1);
-            double imaginario = Y_MIN + (Y_MAX - Y_MIN) * y / (altura - 1);
-            complex double z = real + imaginario * I; //transforma o ponto em um numero complexo dentro da área determinada 
+            double variavel_real = X_MIN + (X_MAX - X_MIN) * x / (largura - 1);
+            double variavel_imaginaria = Y_MIN + (Y_MAX - Y_MIN) * y / (altura - 1);
+            complex double z = variavel_real + variavel_imaginaria * I; //transforma o ponto em um numero complexo dentro da área determinada 
             matriz[y][x] = calcula_convergencia(z); //calcula a convergencia para o ponto 
         }
     }
@@ -86,11 +82,7 @@ void gerar_fractal_newton(int largura, int altura, const char *arquivo_saida) {
     clock_t fim = clock();
     double tempo = (double)(fim - inicio) / CLOCKS_PER_SEC;
 
-    salvar_matriz_em_arquivo(
-        matriz, largura, altura, tempo,
-        X_MIN, X_MAX, Y_MIN, Y_MAX,
-        arquivo_saida
-    );
+    salvar_matriz_em_arquivo(matriz, largura, altura, tempo, arquivo_saida);
 
     for (int i = 0; i < altura; i++) free(matriz[i]);
     free(matriz);
@@ -100,22 +92,23 @@ void gerar_fractal_newton(int largura, int altura, const char *arquivo_saida) {
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "Uso: %s <quantidade_cores_simuladas>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <multiplicador_de_trabalho>\n", argv[0]);
         return 1;
     }
 
-    int nucleos = atoi(argv[1]);
-    if (nucleos <= 0) {
-        fprintf(stderr, "Valor inválido para quantidade de núcleos.\n");
+    //Multiplicador do tamanho do problema (escalabilidade fraca)
+    int multiplicador_trabalho = atoi(argv[1]);
+    if (multiplicador_trabalho <= 0) {
+        fprintf(stderr, "Valor inválido para multiplicador de trabalho.\n");
         return 1;
     }
 
-    int largura = LARGURA_BASE * nucleos;
+    int largura = LARGURA_BASE * multiplicador_trabalho; // para aumentar o problema na escalabilidade fraca
 
     char nome_arquivo[100];
-    snprintf(nome_arquivo, sizeof(nome_arquivo), "newton_seq_%d_output.dat", nucleos);
+    snprintf(nome_arquivo, sizeof(nome_arquivo), "newton_seq_mult%d_output.dat", multiplicador_trabalho);
 
-    printf("Execução sequencial com multiplicador de cores = %d\n", nucleos);
+    printf("Execução sequencial com multiplicador de cores = %d\n", multiplicador_trabalho);
     gerar_fractal_newton(largura, ALTURA_BASE, nome_arquivo);
 
     return 0;

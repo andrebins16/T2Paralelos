@@ -5,8 +5,8 @@
 #include <time.h>
 #include <mpi.h>
 
-#define LARGURA 4000
-#define ALTURA 4000
+#define LARGURA_BASE 4000
+#define ALTURA_BASE 4000
 #define MAX_ITERACOES 1000
 #define EPSILON 1e-6
 
@@ -15,121 +15,156 @@
 #define Y_MIN -0.05
 #define Y_MAX  0.05
 
-#define TAG_TRABALHO 1
-#define TAG_RESULTADO 2
-#define TAG_TERMINO 3
+#define TAG_TRABALHO 1 //tag para o mestre enviar o trabalho
+#define TAG_RESULTADO 2 //tag para o escravo enviar o resultado
+#define TAG_TERMINO 3 //tag para mestre indicar que o saco esvaziou
 
-int calcula_convergencia(complex double z) {
-    for (int i = 0; i < MAX_ITERACOES; i++) {
-        complex double f = cpow(z, 3) - 1;
-        complex double f_linha = 3 * cpow(z, 2);
-        if (cabs(f) < EPSILON) return i;
-        z = z - f / f_linha;
-    }
-    return MAX_ITERACOES;
-}
-
-void salvar_matriz(int **matriz, double tempo_execucao) {
-    FILE *fp = fopen("newton_mpi_output.dat", "w");
+void salvar_matriz(int **matriz, double tempo_execucao, int largura, int altura, const char *arquivo_saida) {
+    FILE *fp = fopen(arquivo_saida, "w");
     if (!fp) {
         perror("Erro ao abrir arquivo");
         exit(1);
     }
+
+    //Cabeçalho
     fprintf(fp, "%d %d %.4f %.17f %.17f %.17f %.17f\n",
-            LARGURA, ALTURA, tempo_execucao, X_MIN, X_MAX, Y_MIN, Y_MAX);
-            
-    for (int y = 0; y < ALTURA; y++) {
-        for (int x = 0; x < LARGURA; x++) {
+            largura, altura, tempo_execucao, X_MIN, X_MAX, Y_MIN, Y_MAX);
+
+    //Matriz
+    for (int y = 0; y < altura; y++) {
+        for (int x = 0; x < largura; x++) {
             fprintf(fp, "%d", matriz[y][x]);
-            if (x < LARGURA - 1) fprintf(fp, " ");
+            if (x < largura - 1) fprintf(fp, " ");
         }
         fprintf(fp, "\n");
     }
     fclose(fp);
 }
 
+int calcula_convergencia(complex double z) {
+    for (int i = 0; i < MAX_ITERACOES; i++) {
+        complex double f = cpow(z, 3) - 1;  //calcula a função
+        complex double f_linha = 3 * cpow(z, 2); //calcula derivada
+        if (cabs(f) < EPSILON) return i; //convergiu (encontrou uma raíz), então retorna o número de iterações
+        z = z - f / f_linha; // próximo passo segundo o método de  Newton-Raphson --> x_(n+1) = x_n - f(x_n) / f'(x_n)
+    }
+    return MAX_ITERACOES; // não convergiu
+}
+
+
+//Método para o mestre enviar a linha para o escravo. 
+//Cria o vetor com os números complexos, e envia para o escravo trabalhar sobre ele. 
+//(Poderia ter criado primeiro a matriz de números complexos. Também poderia só enviar o indice da linha para o escravo, que calcularia o numero complexo a ser usado)
+void mestre_enviar_linha(int linha_id, int largura, int altura, int destino) {
+    complex double *linha_z = malloc((largura + 1) * sizeof(complex double)); //aloca espaço para o vetor a ser enviado
+    linha_z[0] = linha_id ; // primeiro posição do vetor é preenchida com o índice da linha que está sendo enviada
+
+    double variavel_imaginaria = Y_MIN + (Y_MAX - Y_MIN) * linha_id / (altura - 1); 
+    for (int x = 0; x < largura; x++) {
+        double variavel_real = X_MIN + (X_MAX - X_MIN) * x / (largura - 1);
+        linha_z[1 + x] = variavel_real + variavel_imaginaria * I; // calcula o numero complexo e coloca no vetor
+    }
+    MPI_Send(linha_z, largura + 1, MPI_C_DOUBLE_COMPLEX, destino, TAG_TRABALHO, MPI_COMM_WORLD); //envia para o destino
+    free(linha_z);
+}
+
 int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Uso: %s <multiplicador_de_trabalho>\n", argv[0]);
+        return 1;
+    }
+
+    //Multiplicador do tamanho do problema (escalabilidade fraca)
+    int multiplicador_trabalho = atoi(argv[1]);
+    if (multiplicador_trabalho <= 0) {
+        fprintf(stderr, "Valor inválido para multiplicador de trabalho.\n");
+        return 1;
+    }
+
+    int largura = LARGURA_BASE * multiplicador_trabalho; // para aumentar o problema na escalabilidade fraca
+    int altura = ALTURA_BASE;
+
     int rank, size;
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+    //MESTRE
     if (rank == 0) {
-        int **matriz = malloc(ALTURA * sizeof(int *));
-        for (int i = 0; i < ALTURA; i++)
-            matriz[i] = malloc(LARGURA * sizeof(int));
+        printf("Execução paralela com %d cores e com multiplicador de cores = %d\n", size, multiplicador_trabalho);
 
-        int linha_atual = 0, ativos = 0;
+        //matriz de resultados
+        int **matriz = malloc(altura * sizeof(int *));
+        for (int i = 0; i < altura; i++)
+            matriz[i] = malloc(largura * sizeof(int));
+
+
+        int linha_atual = 0; // linha a ser enviada
+        int ativos = 0; // numero de escravos que ainda estao trabalhando
         double inicio = MPI_Wtime();
 
-        for (int i = 1; i < size && linha_atual < ALTURA; i++) {
-            complex double *linha_z = malloc((LARGURA + 1) * sizeof(complex double));
-            linha_z[0] = linha_atual + 0.0 * I;
-            double y = Y_MIN + (Y_MAX - Y_MIN) * linha_atual / (ALTURA - 1);
-            for (int x = 0; x < LARGURA; x++) {
-                double real = X_MIN + (X_MAX - X_MIN) * x / (LARGURA - 1);
-                linha_z[1 + x] = real + y * I;
-            }
-            MPI_Send(linha_z, LARGURA + 1, MPI_C_DOUBLE_COMPLEX, i, TAG_TRABALHO, MPI_COMM_WORLD);
-            free(linha_z);
+        //envia 1 linha para cada escravo
+        for (int i = 1; i < size && linha_atual < altura; i++) {
+            mestre_enviar_linha(linha_atual, largura, altura, i);
             linha_atual++;
             ativos++;
         }
-
+        
+        //laço principal do mestre
         while (ativos > 0) {
-            int *resultado = malloc((LARGURA + 1) * sizeof(int));
+            int *resultado = malloc((largura + 1) * sizeof(int)); //array para o resultado do trabalho de um escravo
             MPI_Status status;
-            MPI_Recv(resultado, LARGURA + 1, MPI_INT, MPI_ANY_SOURCE, TAG_RESULTADO, MPI_COMM_WORLD, &status);
+            MPI_Recv(resultado, largura + 1, MPI_INT, MPI_ANY_SOURCE, TAG_RESULTADO, MPI_COMM_WORLD, &status); //recebe o resultado de qualquer escravo
 
-            int linha_id = resultado[0];
-            for (int j = 0; j < LARGURA; j++)
-                matriz[linha_id][j] = resultado[j + 1];
+            int linha_id = resultado[0]; // na primeira posição está qual linha que foi executada 
+            
+            for (int j = 0; j < largura; j++) 
+                matriz[linha_id][j] = resultado[j + 1]; //coloca o resultado na linha correta. (j+1) por conta do primeiro indice "morto"
 
             free(resultado);
 
-            if (linha_atual < ALTURA) {
-                complex double *linha_z = malloc((LARGURA + 1) * sizeof(complex double));
-                linha_z[0] = linha_atual + 0.0 * I;
-                double y = Y_MIN + (Y_MAX - Y_MIN) * linha_atual / (ALTURA - 1);
-                for (int x = 0; x < LARGURA; x++) {
-                    double real = X_MIN + (X_MAX - X_MIN) * x / (LARGURA - 1);
-                    linha_z[1 + x] = real + y * I;
-                }
-                MPI_Send(linha_z, LARGURA + 1, MPI_C_DOUBLE_COMPLEX, status.MPI_SOURCE, TAG_TRABALHO, MPI_COMM_WORLD);
-                free(linha_z);
+            if (linha_atual < altura) { //ainda tem trabalho no saco
+                mestre_enviar_linha(linha_atual, largura, altura, status.MPI_SOURCE); //envia a linha para quem acabou de terminar (quem pediu trabalho)
                 linha_atual++;
             } else {
-                MPI_Send(NULL, 0, MPI_C_DOUBLE_COMPLEX, status.MPI_SOURCE, TAG_TERMINO, MPI_COMM_WORLD);
+                MPI_Send(NULL, 0, MPI_C_DOUBLE_COMPLEX, status.MPI_SOURCE, TAG_TERMINO, MPI_COMM_WORLD); //acabou o saco, envia sinal de termino
                 ativos--;
             }
         }
 
         double fim = MPI_Wtime();
-        salvar_matriz(matriz, fim - inicio);
-        for (int i = 0; i < ALTURA; i++) free(matriz[i]);
+        double tempo = fim- inicio;
+        char nome_arquivo[100];
+        snprintf(nome_arquivo, sizeof(nome_arquivo), "newton_%dcores_parallel_mult%d_output.dat", size, multiplicador_trabalho); //cria o nome do arquivo de saida dinamicamente
+        salvar_matriz(matriz, tempo, largura, altura,nome_arquivo); //salva a matriz no arquivo
+        for (int i = 0; i < altura; i++) free(matriz[i]);
         free(matriz);
 
-        printf("Fractal gerado com MPI (z pronto) em %.4f segundos\n", fim - inicio);
+        printf("Tempo de execução: %.4f segundos\n", tempo);
+    //ESCRAVO    
     } else {
+        //laço principal do escravo
         while (1) {
-            complex double *linha_z = malloc((LARGURA + 1) * sizeof(complex double));
+            complex double *linha_z = malloc((largura + 1) * sizeof(complex double)); //array para o trabalho que deve ser realizado
             MPI_Status status;
 
-            MPI_Recv(linha_z, LARGURA + 1, MPI_C_DOUBLE_COMPLEX, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-            if (status.MPI_TAG == TAG_TERMINO) {
+            MPI_Recv(linha_z, largura + 1, MPI_C_DOUBLE_COMPLEX, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status); // recebe a mensagem, coloca conteudo no array
+            if (status.MPI_TAG == TAG_TERMINO) { // recebeu sinal de termino, logo acaba
                 free(linha_z);
                 break;
             }
+            //senão, é um sinal de trabalho
+            int linha_id = linha_z[0];  //pega o indice da linha que vai ser trabalhada (para enviar de volta)
 
-            int linha_id = (int)creal(linha_z[0]);
-            int *resultado = malloc((LARGURA + 1) * sizeof(int));
-            resultado[0] = linha_id;
+            int *resultado = malloc((largura + 1) * sizeof(int)); //cria o array de resultado
+            resultado[0] = linha_id; //já indica qual a linha que foi executada na resposta 
 
-            for (int i = 0; i < LARGURA; i++) {
+            //faz o trabalho na linha, calculando a convergencia
+            for (int i = 0; i < largura; i++) {
                 resultado[i + 1] = calcula_convergencia(linha_z[i + 1]);
             }
 
-            MPI_Send(resultado, LARGURA + 1, MPI_INT, 0, TAG_RESULTADO, MPI_COMM_WORLD);
+            MPI_Send(resultado, largura + 1, MPI_INT, 0, TAG_RESULTADO, MPI_COMM_WORLD);//envia o resultado de volta
             free(linha_z);
             free(resultado);
         }
